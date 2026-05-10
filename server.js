@@ -50,6 +50,7 @@ app.post('/criar-cobranca', async (req, res) => {
         notification_url:   RENDER_URL + '/webhook/mercadopago',
         payer:              { email: 'pagador@convitta.app' },
         metadata:           { invite_code: inviteCode },
+        date_of_expiration: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       }),
     });
 
