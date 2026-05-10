@@ -62,11 +62,15 @@ app.post('/criar-cobranca', async (req, res) => {
 
     const mpData    = await mpResp.json();
     const txData    = mpData.point_of_interaction && mpData.point_of_interaction.transaction_data || {};
-    const emv       = txData.qr_code        || '';
-    const qrBase64  = txData.qr_code_base64 || '';
+    const emv      = (txData.qr_code        || '').replace(/[\r\n\t]/g, '').trim();
+    const qrBase64 = (txData.qr_code_base64 || '').replace(/[\r\n\t]/g, '').trim();
     const paymentId = String(mpData.id || '');
 
-    console.log('PIX criado, payment_id:', paymentId, '| EMV length:', emv.length);
+    console.log('PIX criado, payment_id:', paymentId);
+    console.log('EMV length:', emv.length);
+    console.log('EMV primeiros 80 chars:', emv.substring(0, 80));
+    console.log('EMV últimos 10 chars:', emv.substring(emv.length - 10));
+    console.log('EMV tem espaços internos:', /\s/.test(emv));
 
     await inviteRef.update({
       'payment.mpPaymentId': paymentId,
