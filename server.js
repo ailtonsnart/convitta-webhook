@@ -66,20 +66,30 @@ app.post('/criar-cobranca', async (req, res) => {
     const qrBase64 = (txData.qr_code_base64 || '').replace(/[\r\n\t]/g, '').trim();
     const paymentId = String(mpData.id || '');
 
-    console.log('PIX criado, payment_id:', paymentId);
-    console.log('EMV length:', emv.length);
-    console.log('EMV primeiros 80 chars:', emv.substring(0, 80));
-    console.log('EMV últimos 10 chars:', emv.substring(emv.length - 10));
-    console.log('EMV tem espaços internos:', /\s/.test(emv));
+    // Extrai a chave PIX do EMV do Mercado Pago
+    let mpPixKey = '';
+    const uuidMatch = emv.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    if (uuidMatch) {
+      mpPixKey = uuidMatch[1];
+    } else {
+      // Tenta extrair chave pelo campo 01 do EMV
+      const keyMatch = emv.match(/01(\d{2})([a-zA-Z0-9@._+\-]{5,}?)52/);
+      if (keyMatch) mpPixKey = keyMatch[2].slice(0, parseInt(keyMatch[1]));
+    }
+
+    console.log('PIX criado, payment_id:', paymentId, '| EMV length:', emv.length);
+    console.log('Chave PIX MP:', mpPixKey || '(nao extraida)');
 
     await inviteRef.update({
       'payment.mpPaymentId': paymentId,
+      'payment.mpPixKey':    mpPixKey,
       'payment.emv':         emv,
       updatedAt: new Date().toISOString(),
     });
 
     return res.json({
       paymentId,
+      mpPixKey,
       pixCopiaECola: emv,
       pixQrCodeImg:  qrBase64 ? 'data:image/png;base64,' + qrBase64 : '',
     });
