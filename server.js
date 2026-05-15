@@ -22,6 +22,7 @@ function setCors(res) {
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'convitta-webhook' }));
 app.options('*', (req, res) => { setCors(res); res.sendStatus(204); });
 
+// ─── Cria cobrança PIX e retorna QR Code + link de pagamento ──────────────────
 app.post('/criar-cobranca', async (req, res) => {
   setCors(res);
   try {
@@ -36,6 +37,7 @@ app.post('/criar-cobranca', async (req, res) => {
     const amount = modelMode === 'premium' ? 9.99 : 4.99;
     const desc   = 'Convitta - Modelo ' + (modelName || (modelMode === 'premium' ? 'Premium' : 'Padrao'));
 
+    // Cria pagamento PIX via API de Pagamentos (retorna QR Code imagem)
     const mpResp = await fetch(MP_API + '/v1/payments', {
       method: 'POST',
       headers: {
@@ -48,9 +50,9 @@ app.post('/criar-cobranca', async (req, res) => {
         description:        desc,
         payment_method_id:  'pix',
         notification_url:   RENDER_URL + '/webhook/mercadopago',
+        date_of_expiration: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         payer:              { email: 'pagador@convitta.app' },
         metadata:           { invite_code: inviteCode },
-        date_of_expiration: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       }),
     });
 
@@ -61,37 +63,22 @@ app.post('/criar-cobranca', async (req, res) => {
     }
 
     const mpData    = await mpResp.json();
-    const txData    = mpData.point_of_interaction && mpData.point_of_interaction.transaction_data || {};
-    const emv      = (txData.qr_code        || '').replace(/[\r\n\t]/g, '').trim();
-    const qrBase64 = (txData.qr_code_base64 || '').replace(/[\r\n\t]/g, '').trim();
+    const txData    = (mpData.point_of_interaction && mpData.point_of_interaction.transaction_data) || {};
+    const qrBase64  = (txData.qr_code_base64 || '').replace(/[\r\n\t]/g, '');
+    const ticketUrl = txData.ticket_url || '';
     const paymentId = String(mpData.id || '');
 
-    // Extrai a chave PIX do EMV do Mercado Pago
-    let mpPixKey = '';
-    const uuidMatch = emv.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-    if (uuidMatch) {
-      mpPixKey = uuidMatch[1];
-    } else {
-      // Tenta extrair chave pelo campo 01 do EMV
-      const keyMatch = emv.match(/01(\d{2})([a-zA-Z0-9@._+\-]{5,}?)52/);
-      if (keyMatch) mpPixKey = keyMatch[2].slice(0, parseInt(keyMatch[1]));
-    }
-
-    console.log('PIX criado, payment_id:', paymentId, '| EMV length:', emv.length);
-    console.log('Chave PIX MP:', mpPixKey || '(nao extraida)');
+    console.log('PIX criado, payment_id:', paymentId, '| QR:', !!qrBase64, '| ticket_url:', !!ticketUrl);
 
     await inviteRef.update({
       'payment.mpPaymentId': paymentId,
-      'payment.mpPixKey':    mpPixKey,
-      'payment.emv':         emv,
       updatedAt: new Date().toISOString(),
     });
 
     return res.json({
       paymentId,
-      mpPixKey,
-      pixCopiaECola: emv,
-      pixQrCodeImg:  qrBase64 ? 'data:image/png;base64,' + qrBase64 : '',
+      pixQrCodeImg: qrBase64 ? 'data:image/png;base64,' + qrBase64 : '',
+      checkoutUrl:  ticketUrl,
     });
 
   } catch (err) {
@@ -100,6 +87,7 @@ app.post('/criar-cobranca', async (req, res) => {
   }
 });
 
+// ─── Webhook Mercado Pago ─────────────────────────────────────────────────────
 app.post('/webhook/mercadopago', async (req, res) => {
   try {
     const body   = req.body;
@@ -116,7 +104,6 @@ app.post('/webhook/mercadopago', async (req, res) => {
     const mpResp = await fetch(MP_API + '/v1/payments/' + paymentId, {
       headers: { 'Authorization': 'Bearer ' + MP_TOKEN },
     });
-
     if (!mpResp.ok) return res.status(200).json({ received: true });
 
     const payment = await mpResp.json();
@@ -126,7 +113,7 @@ app.post('/webhook/mercadopago', async (req, res) => {
       return res.status(200).json({ received: true, paid: false });
     }
 
-    const inviteCode = payment.metadata && payment.metadata.invite_code || '';
+    const inviteCode = (payment.metadata && payment.metadata.invite_code) || '';
     let inviteRef = null;
 
     if (inviteCode) {
@@ -143,7 +130,7 @@ app.post('/webhook/mercadopago', async (req, res) => {
     }
 
     await inviteRef.update({ paid: true, updatedAt: new Date().toISOString() });
-    console.log('Convite liberado para payment_id:', paymentId);
+    console.log('Convite liberado! payment_id:', paymentId);
     return res.status(200).json({ received: true, paid: true });
 
   } catch (err) {
