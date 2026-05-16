@@ -84,16 +84,17 @@ app.post('/criar-cobranca', async (req, res) => {
     const ticketUrl = txData.ticket_url || '';
     const paymentId = String(mpData.id || '');
 
-    // Decodifica o QR Code para obter o texto exato que o banco lê
-    let copiaCola = emvApi;
-    if (qrBase64) {
-      const decoded = await decodeQrFromBase64(qrBase64);
-      if (decoded) {
-        copiaCola = decoded;
-        console.log('QR decodificado:', decoded.substring(0, 60));
-        console.log('Igual ao qr_code da API:', decoded === emvApi);
+    // Usa diretamente o payload oficial do Mercado Pago
+      const copiaCola = String(txData.qr_code || '')
+        .replace(/\s+/g, '')
+        .trim();
+
+      if (!copiaCola) {
+        console.error('PIX Copia e Cola vazio');
+        return res.status(500).json({
+          error: 'Erro ao gerar PIX Copia e Cola'
+        });
       }
-    }
 
     console.log('PIX criado, payment_id:', paymentId, '| copia_cola length:', copiaCola.length);
 
