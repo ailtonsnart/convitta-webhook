@@ -1,5 +1,7 @@
 const express = require('express');
 const admin   = require('firebase-admin');
+const Jimp    = require('jimp');
+const jsQR    = require('jsqr');
 
 const app = express();
 app.use(express.json());
@@ -22,7 +24,21 @@ function setCors(res) {
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'convitta-webhook' }));
 app.options('*', (req, res) => { setCors(res); res.sendStatus(204); });
 
-// ─── Cria cobrança PIX e retorna QR Code + link de pagamento ──────────────────
+// Decodifica o QR Code da imagem base64 para obter o texto exato
+async function decodeQrFromBase64(base64) {
+  try {
+    const buffer = Buffer.from(base64, 'base64');
+    const image  = await Jimp.read(buffer);
+    const { data, width, height } = image.bitmap;
+    const code = jsQR(new Uint8ClampedArray(data), width, height);
+    return code ? code.data : null;
+  } catch (e) {
+    console.error('QR decode error:', e.message);
+    return null;
+  }
+}
+
+// ─── Cria cobrança PIX — retorna QR Code + Copia e Cola do próprio QR ─────────
 app.post('/criar-cobranca', async (req, res) => {
   setCors(res);
   try {
@@ -37,7 +53,6 @@ app.post('/criar-cobranca', async (req, res) => {
     const amount = modelMode === 'premium' ? 9.99 : 4.99;
     const desc   = 'Convitta - Modelo ' + (modelName || (modelMode === 'premium' ? 'Premium' : 'Padrao'));
 
-    // Cria pagamento PIX via API de Pagamentos (retorna QR Code imagem)
     const mpResp = await fetch(MP_API + '/v1/payments', {
       method: 'POST',
       headers: {
@@ -65,20 +80,34 @@ app.post('/criar-cobranca', async (req, res) => {
     const mpData    = await mpResp.json();
     const txData    = (mpData.point_of_interaction && mpData.point_of_interaction.transaction_data) || {};
     const qrBase64  = (txData.qr_code_base64 || '').replace(/[\r\n\t]/g, '');
+    const emvApi    = (txData.qr_code        || '').replace(/[\r\n\t]/g, '').trim();
     const ticketUrl = txData.ticket_url || '';
     const paymentId = String(mpData.id || '');
 
-    console.log('PIX criado, payment_id:', paymentId, '| QR:', !!qrBase64, '| ticket_url:', !!ticketUrl);
+    // Decodifica o QR Code para obter o texto exato que o banco lê
+    let copiaCola = emvApi;
+    if (qrBase64) {
+      const decoded = await decodeQrFromBase64(qrBase64);
+      if (decoded) {
+        copiaCola = decoded;
+        console.log('QR decodificado:', decoded.substring(0, 60));
+        console.log('Igual ao qr_code da API:', decoded === emvApi);
+      }
+    }
+
+    console.log('PIX criado, payment_id:', paymentId, '| copia_cola length:', copiaCola.length);
 
     await inviteRef.update({
       'payment.mpPaymentId': paymentId,
+      'payment.copiaCola':   copiaCola,
       updatedAt: new Date().toISOString(),
     });
 
     return res.json({
       paymentId,
-      pixQrCodeImg: qrBase64 ? 'data:image/png;base64,' + qrBase64 : '',
-      checkoutUrl:  ticketUrl,
+      pixQrCodeImg:  qrBase64 ? 'data:image/png;base64,' + qrBase64 : '',
+      pixCopiaECola: copiaCola,
+      checkoutUrl:   ticketUrl,
     });
 
   } catch (err) {
