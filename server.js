@@ -1,7 +1,5 @@
 const express = require('express');
 const admin   = require('firebase-admin');
-const Jimp    = require('jimp');
-const jsQR    = require('jsqr');
 
 const app = express();
 app.use(express.json());
@@ -23,9 +21,6 @@ function setCors(res) {
 
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'convitta-webhook' }));
 app.options('*', (req, res) => { setCors(res); res.sendStatus(204); });
-
-// Decodifica o QR Code da imagem base64 para obter o texto exato
-
 
 // ─── Cria cobrança PIX — retorna QR Code + Copia e Cola do próprio QR ─────────
 app.post('/criar-cobranca', async (req, res) => {
@@ -69,15 +64,20 @@ app.post('/criar-cobranca', async (req, res) => {
     const mpData    = await mpResp.json();
     const txData    = (mpData.point_of_interaction && mpData.point_of_interaction.transaction_data) || {};
     const qrBase64  = (txData.qr_code_base64 || '').replace(/[\r\n\t]/g, '');
-    const emvApi    = (txData.qr_code        || '').replace(/[\r\n\t]/g, '').trim();
     const ticketUrl = txData.ticket_url || '';
     const paymentId = String(mpData.id || '');
 
-    // Decodifica o QR Code para obter o texto exato que o banco lê
     const copiaCola = String(txData.qr_code || '')
       .replace(/\s+/g, '')
       .trim();
 
+    console.log('PIX ORIGINAL:', copiaCola);
+    console.log('TAMANHO:', copiaCola.length);
+    console.log('FINAL:', copiaCola.slice(-8));
+
+    if (!/6304[A-F0-9]{4}$/.test(copiaCola)) {
+      console.warn('PIX COPIA E COLA nao termina com 6304XXXX:', copiaCola.slice(-8));
+    }
     if (!copiaCola) {
       console.error('PIX Copia e Cola vazio');
       return res.status(500).json({ error: 'Erro ao gerar PIX Copia e Cola' });
