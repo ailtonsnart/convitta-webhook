@@ -25,18 +25,7 @@ app.get('/', (req, res) => res.json({ status: 'ok', service: 'convitta-webhook' 
 app.options('*', (req, res) => { setCors(res); res.sendStatus(204); });
 
 // Decodifica o QR Code da imagem base64 para obter o texto exato
-async function decodeQrFromBase64(base64) {
-  try {
-    const buffer = Buffer.from(base64, 'base64');
-    const image  = await Jimp.read(buffer);
-    const { data, width, height } = image.bitmap;
-    const code = jsQR(new Uint8ClampedArray(data), width, height);
-    return code ? code.data : null;
-  } catch (e) {
-    console.error('QR decode error:', e.message);
-    return null;
-  }
-}
+
 
 // ─── Cria cobrança PIX — retorna QR Code + Copia e Cola do próprio QR ─────────
 app.post('/criar-cobranca', async (req, res) => {
@@ -84,17 +73,15 @@ app.post('/criar-cobranca', async (req, res) => {
     const ticketUrl = txData.ticket_url || '';
     const paymentId = String(mpData.id || '');
 
-    // Usa diretamente o payload oficial do Mercado Pago
-      const copiaCola = String(txData.qr_code || '')
-        .replace(/\s+/g, '')
-        .trim();
+    // Decodifica o QR Code para obter o texto exato que o banco lê
+    const copiaCola = String(txData.qr_code || '')
+      .replace(/\s+/g, '')
+      .trim();
 
-      if (!copiaCola) {
-        console.error('PIX Copia e Cola vazio');
-        return res.status(500).json({
-          error: 'Erro ao gerar PIX Copia e Cola'
-        });
-      }
+    if (!copiaCola) {
+      console.error('PIX Copia e Cola vazio');
+      return res.status(500).json({ error: 'Erro ao gerar PIX Copia e Cola' });
+    }
 
     console.log('PIX criado, payment_id:', paymentId, '| copia_cola length:', copiaCola.length);
 
